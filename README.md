@@ -1,84 +1,58 @@
-# Hyperfusion AOD Wake Service
+# Android Hardware Scheduler Framework
 
-[![Go](https://img.shields.io/badge/Go-1.21-blue)](https://golang.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+![Language](https://img.shields.io/badge/Language-Rust-orange.svg)
+![Platform](https://img.shields.io/badge/Platform-Android%20%28Root%29-green.svg)
+![License](https://img.shields.io/badge/License-MIT-blue.svg)
 
-Repository: https://github.com/CanStarRivers/AODWakeService
+本仓库开源了一个基于 Rust 编写的高性能 Android 底层硬件级自动化调度框架。
 
-File: vendor.hyperfusion.aod.display-service.go
+**⚠️ 仓库结构说明**：
+* **源码部分 (Framework)**：本仓库开源的源码（如 `main.rs` / `lib.rs`）是一个纯粹的**底层引擎框架**。它剥离了具体的手机型号与业务逻辑，封装了极低开销的底层硬件交互能力。
+* **成品文件 (Complete Build)**：仓库中上传的成品文件（或 Release 产物）是基于该框架实现的**完整体程序**——专为 MIUI/HyperOS 定制的息屏显示临时接管服务 (`vendor.hyperfusion.aod.temporary.display-service`)。
 
-Hyperfusion AOD Wake Service is a zero-overhead Always-On Display (AOD) wake service for Android devices. It leverages low-level touch gestures to wake the screen efficiently while keeping power consumption minimal.
+---
 
-## Features
+## 🏗️ 框架核心能力 (面向开发者)
 
-- Precise gesture-based wake detection using low-level keys (KEY_GOTO and others).
-- Zero-overhead listener using a single thread; no coordinate calculations required.
-- Monitors XML configuration changes using Inotify with a fallback polling mechanism.
-- Smooth backlight fade-in and fade-out.
-- Custom wake lock support to prevent CPU sleep during backlight fade or countdown.
-- Automatic suspend state detection to prevent accidental wake-ups.
+如果你是一名开发者，你可以直接使用本框架快速构建自己的系统级后台常驻服务：
 
-## Installation
+* **控制反转设计**：实现特定的 `RuleHandler` 接口即可注入业务逻辑，无需处理死锁与线程调度。
+* **配置热重载**：基于 Linux 原生 `inotify` 机制，实现配置变更毫秒级响应，告别低效轮询。
+* **内核级输入拦截**：直接读取 `/dev/input/event*` 节点，精确解析并拦截底层硬件事件（如触控手势、按键）。
+* **原生级环境光感知**：以极低延迟高频读取光线传感器 (Lux) 数据，为屏幕亮度的动态调节提供毫无卡顿的数据支撑。
+* **安全的生命周期管理**：基于 `Condvar` 的并发状态机，自动申请/维持唤醒锁 (`WakeLock`)，并支持超时后的平滑调度与强制 `Deep Sleep`。
 
-### 1. Clone the repository
+---
 
-git clone https://github.com/CanStarRivers/AODWakeService.git
-cd AODWakeService
+## ✨ 完整体程序说明 (面向使用者)
 
-### 2. Build the project
+如果你使用的是仓库中提供的完整成品程序，它包含了以下针对 MIUI/HyperOS 深度定制的 AOD 业务逻辑：
 
-Ensure Go environment or cross-compilation toolchain is available:
+1. **进程名防伪校验**：启动时强制校验进程名为 `vendor.hyperfusion.aod.temporary.display-service`，防止恶意重命名或被外部脚本错误拉起。
+2. **特定手势唤醒**：精准匹配 `fts` 触控设备，识别特定底层硬件手势（如 KEY_GOTO 354, 338）点亮屏幕。
+3. **FOD 防冲突避让**：实时监控屏下指纹 (`fod_press_status`) 状态，指纹识别期间主动放弃接管，防止背光冲突。
+4. **智能环境光自适应**：结合高频拉取的环境光数据与多级映射表，动态计算并平滑过渡屏幕目标亮度。
 
-go build -o hyperfusion_aod vendor.hyperfusion.aod.display-service.go
+### ⚙️ 环境要求
 
-### 3. Deploy to Android
+* **系统**: Android (针对 MIUI / HyperOS)
+* **权限**: **必须具备 Root 权限**
+* **架构**: `aarch64`
 
-adb push hyperfusion_aod /data/local/tmp/
-adb shell chmod 755 /data/local/tmp/hyperfusion_aod
+### 🚀 部署与运行
 
-### 4. Run the service
+**极其重要**：程序内置了防伪校验，二进制文件名**必须**是 `vendor.hyperfusion.aod.temporary.display-service`，否则启动时将静默退出。
 
-adb shell /data/local/tmp/hyperfusion_aod &
+```bash
+# 1. 确保文件名为指定的系统进程名
+mv <下载的完整体文件> vendor.hyperfusion.aod.temporary.display-service
 
-## Configuration
+# 2. 推送至 Android 设备的临时目录
+adb push vendor.hyperfusion.aod.temporary.display-service /data/local/tmp/
 
-Configuration file path:
-
-/data/user_de/0/com.miui.aod/shared_prefs/com.miui.aod_preferences.xml
-
-- Set `aod_temporary_style` to `true` to enable AOD wake functionality.
-- Configuration changes are automatically applied without restarting the service.
-
-## Code Structure
-
-| File / Module | Description |
-|---------------|-------------|
-| vendor.hyperfusion.aod.display-service.go | Core program handling configuration watch, gesture monitoring, backlight fading, and wake logic. |
-| InputEvent struct | Maps to Linux 64-bit `input_event` structure. |
-| Constants | Includes touch key codes, backlight paths, wake lock names, and other parameters. |
-
-## Usage Example
-
-When the service is running and the device screen is off:
-
-1. A FTS touch gesture key is pressed.
-2. The service checks the configuration and system suspend state.
-3. A custom wake lock is acquired.
-4. Backlight fades smoothly to the target brightness.
-5. After a 10-second timeout, the screen fades out and wake locks are released.
-
-## Notes
-
-- Supports only devices with FTS touch drivers.
-- Root access is required to access `/sys/class/backlight` and `/sys/power`.
-- Changing `TargetBrightness` or `AODTimeout` requires restarting the service.
-- Running on non-standard Android ROMs may result in permission or node access issues.
-
-## License
-
-This project is licensed under the MIT License. See the LICENSE file for details.
-
-## Commercial Use Restriction
-
-**This software is strictly prohibited from any paid commercial use.**  
-Personal, educational, or open-source usage is allowed, but any charging, selling, or commercial monetization is forbidden without explicit permission from the author.
+# 3. 赋予执行权限并以 Root 身份运行
+adb shell
+su
+cd /data/local/tmp/
+chmod +x vendor.hyperfusion.aod.temporary.display-service
+./vendor.hyperfusion.aod.temporary.display-service
